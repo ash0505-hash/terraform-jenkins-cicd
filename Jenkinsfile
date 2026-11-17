@@ -1,10 +1,11 @@
 
 pipeline {
+
     agent any
 
     environment {
         AWS_DEFAULT_REGION = 'ap-south-1'
-        TF_IN_AUTOMATION = 'true'
+        TF_DIR = 'terraform'
     }
 
     stages {
@@ -15,17 +16,53 @@ pipeline {
             }
         }
 
+        stage('Terraform Version') {
+            steps {
+                sh 'terraform --version'
+            }
+        }
+
+        stage('AWS Authentication') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+                        export AWS_EC2_METADATA_DISABLED=true
+                        aws sts get-caller-identity
+                    '''
+                }
+            }
+        }
+
         stage('Terraform Init') {
             steps {
-                dir('terraform') {
-                    sh 'terraform init'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    dir("${TF_DIR}") {
+                        sh '''
+                            set +x
+                            export AWS_EC2_METADATA_DISABLED=true
+                            terraform init
+                        '''
+                    }
                 }
             }
         }
 
         stage('Terraform Validate') {
             steps {
-                dir('terraform') {
+                dir("${TF_DIR}") {
                     sh 'terraform validate'
                 }
             }
@@ -33,24 +70,65 @@ pipeline {
 
         stage('Terraform Plan') {
             steps {
-                dir('terraform') {
-                    sh 'terraform plan -out=tfplan'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    dir("${TF_DIR}") {
+                        sh '''
+                            set +x
+                            export AWS_EC2_METADATA_DISABLED=true
+                            terraform plan -out=tfplan
+                        '''
+                    }
                 }
+            }
+        }
+
+        stage('Approval') {
+            steps {
+                input message: 'Approve AWS infrastructure deployment?'
             }
         }
 
         stage('Terraform Apply') {
             steps {
-                dir('terraform') {
-                    sh 'terraform apply -auto-approve tfplan'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    dir("${TF_DIR}") {
+                        sh '''
+                            set +x
+                            export AWS_EC2_METADATA_DISABLED=true
+                            terraform apply -auto-approve tfplan
+                        '''
+                    }
                 }
             }
         }
 
         stage('Deployment URL') {
             steps {
-                dir('terraform') {
-                    sh 'terraform output website_url'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    dir("${TF_DIR}") {
+                        sh '''
+                            set +x
+                            terraform output
+                        '''
+                    }
                 }
             }
         }
@@ -58,11 +136,10 @@ pipeline {
 
     post {
         success {
-            echo 'CI/CD deployment successful!'
+            echo 'Terraform deployment successful!'
         }
-
         failure {
-            echo 'CI/CD pipeline failed. Check Jenkins console output.'
+            echo 'Terraform pipeline failed. Check Console Output.'
         }
     }
 }
